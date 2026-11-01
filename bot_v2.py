@@ -7,8 +7,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import FSInputFile
 from aiogram.filters import Command
 
-# Токен вашего бота от @BotFather
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+# Токен берется из переменных окружения Render
+TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -43,21 +43,17 @@ def extract_pdf_data(pdf_path):
     m_model = re.search(r"модель\s*«([^»]+)»", full_text, re.IGNORECASE)
     data["model"] = m_model.group(1) if m_model else ""
     
-    # 5. Климатические условия
-    m_temp = re.search(r"Harorat:\s*([^
-°]+)", full_text)
+    # 5. Климатические условия (безопасные регулярные выражения в одну строку)
+    m_temp = re.search(r"Harorat:\s*([^\n°]+)", full_text)
     data["temp"] = m_temp.group(1).strip() if m_temp else "21"
     
-    m_hum = re.search(r"Nisbiy namlik:\s*([^
-%]+)", full_text)
+    m_hum = re.search(r"Nisbiy namlik:\s*([^\n%]+)", full_text)
     data["humidity"] = m_hum.group(1).strip() if m_hum else "36"
     
-    m_press = re.search(r"Atmosfera bosimi:\s*([^
-кПаkPa]+)", full_text)
+    m_press = re.search(r"Atmosfera bosimi:\s*([^\n]+)", full_text)
     data["pressure"] = m_press.group(1).strip() if m_press else "97"
     
-    m_wind = re.search(r"Havo tezligi:\s*([^
-]+)", full_text)
+    m_wind = re.search(r"Havo tezligi:\s*([^\n]+)", full_text)
     data["wind"] = m_wind.group(1).strip() if m_wind else "1 m/s"
     
     return data
@@ -69,7 +65,6 @@ def update_excel_journal(template_path, output_path, data):
     # 1. Обновляем главный лист "Рабочий журнал"
     sheet_main = wb['Рабочий журнал'] if 'Рабочий журнал' in wb.sheetnames else wb.active
     
-    # Заполнение параметров в шапке
     if data.get("date"):
         sheet_main['E2'] = f"     Дата проведения испытаний: «{data['date'][:2]}» {data['date'][3:5]} 2026 г.      "
     if data.get("temp"):
@@ -88,10 +83,9 @@ def update_excel_journal(template_path, output_path, data):
     if data.get("vin"):
         sheet_main['E15'] = data['vin']
 
-    # 2. Массовая замена данных автомобиля по всем 80+ листам (сохраняя формулы!)
+    # 2. Замена данных автомобиля по всем листам
     for sheet_name in wb.sheetnames:
         sheet = wb[sheet_name]
-        # Проходим по верхним строкам шапок листов
         for r in range(1, 16):
             for c in range(1, 10):
                 cell = sheet.cell(row=r, column=c)
@@ -103,14 +97,13 @@ def update_excel_journal(template_path, output_path, data):
                         cell.value = f"Марка: {data['mark']}"
 
     wb.save(output_path)
-    print(f"Журнал сформирован: {output_path}")
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
         "👋 **Добро пожаловать!**\n\n"
         "Отправьте мне PDF-протокол испытаний, и я автоматически заполню "
-        "рабочий журнал сертификационных испытаний Excel (все 80+ листов) согласно всем правилам V2."
+        "рабочий журнал сертификационных испытаний Excel (все 80+ листов)."
     )
 
 @dp.message(lambda msg: msg.document is not None)
@@ -126,20 +119,15 @@ async def handle_document(message: types.Message):
     output_excel_path = f"Журнал_{doc.file_name.replace('.pdf', '')}.xlsx"
 
     try:
-        # Скачивание файла
         file_info = await bot.get_file(doc.file_id)
         downloaded = await bot.download(file_info)
         with open(pdf_file_path, "wb") as f:
             f.write(downloaded.read())
 
-        # 1. Извлечение данных из PDF
         data = extract_pdf_data(pdf_file_path)
-
-        # 2. Заполнение Excel шаблона
-        template_file = "1660518 Переделанный.xlsx"
+        template_file = "1660518 Переделанный.xlsx"
         update_excel_journal(template_file, output_excel_path, data)
 
-        # 3. Отправка результата
         result_file = FSInputFile(output_excel_path)
         await message.answer_document(
             result_file, 
@@ -154,7 +142,6 @@ async def handle_document(message: types.Message):
         await message.answer(f"❌ **Произошла ошибка при обработке:** {str(e)}")
 
     finally:
-        # Очистка временных файлов
         if os.path.exists(pdf_file_path):
             os.remove(pdf_file_path)
         if os.path.exists(output_excel_path):
